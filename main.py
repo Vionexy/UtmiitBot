@@ -11,12 +11,27 @@ import aiosqlite
 from telebot.async_telebot import AsyncTeleBot
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, CallbackQuery
 import random
+from threading import Thread
+
+# Условный импорт Flask (только если используется webhook)
+try:
+    from flask import Flask, request  # pyright: ignore[reportMissingImports]
+    FLASK_AVAILABLE = True
+except ImportError:
+    FLASK_AVAILABLE = False
+    Flask = None  # type: ignore
+    request = None  # type: ignore
 
 # Токен бота
 API_TOKEN = os.getenv("API_TOKEN")
 bot = AsyncTeleBot(API_TOKEN)
 # ID админа
 ADMIN_CHAT_ID = 6986627524
+# Webhook настройки
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")  # URL для webhook (например, https://yourdomain.com/webhook)
+WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", "8443"))  # Порт для webhook
+WEBHOOK_LISTEN = os.getenv("WEBHOOK_LISTEN", "0.0.0.0")  # Адрес для прослушивания
+USE_WEBHOOK = os.getenv("USE_WEBHOOK", "false").lower() == "true"  # Переключатель между webhook и polling
 # ID файлов для скачивания и их метаданные
 SCHEDULE_FILES = {
     "monday": {
@@ -113,9 +128,7 @@ user_schedule_messages: Dict[int, List[int]] = {}
 admin_lists_cache: Dict[int, Dict[str, List[str]]] = {}  # {chat_id: {'users': list, 'subscribers': list}}
 # Количество элементов на странице
 ITEMS_PER_PAGE = 50
-# Новый счётчик для доната
-user_donate_counter: Dict[int, int] = {}
-# Стоимость хостинга
+# Стоимость хостинга (используется в тексте доната)
 HOSTING_PRICE = 150
 
 
@@ -156,80 +169,15 @@ async def build_stats_text() -> str:
     )
 
 
-def build_donate_settings_text(warning_enabled: bool) -> str:
-    """Формирует текст меню управления донатом."""
-    return (
-        f"💳Управление донатом\n\n"
-        f"🔔Предупреждение: {'ВКЛ' if warning_enabled else 'ВЫКЛ'}\n"
-        f"💸Стоимость хостинга: {HOSTING_PRICE}₽/мес\n\n"
-        f"Используйте кнопку ниже для переключения:"
-    )
-
-
-# Функции для работы с настройками
-async def get_setting(key: str, default: str = "") -> str:
-    """Получает значение настройки из базы."""
-    result = await db_execute("SELECT value FROM bot_settings WHERE key = ?", (key,), fetch=True)
-    return result[0][0] if result else default
-
-
-async def set_setting(key: str, value: str) -> None:
-    """Устанавливает значение настройки в базу."""
-    await db_execute("INSERT OR REPLACE INTO bot_settings (key, value) VALUES (?, ?)", (key, value), commit=True)
-
-
-async def is_donate_warning_enabled() -> bool:
-    """Проверяет, включено ли предупреждение о донате."""
-    warning_status = await get_setting("donate_warning", "1")
-    return warning_status == "1"
-
-
-# Функция для проверки, показывать ли донат (примерно раз в 1-3 раза)
-def should_show_donate(chat_id: int) -> bool:
-    """Возвращает True примерно раз в 1-3 запроса расписания"""
-    if chat_id not in user_donate_counter:
-        user_donate_counter[chat_id] = 0
-    user_donate_counter[chat_id] += 1
-    if user_donate_counter[chat_id] >= random.randint(1, 3):
-        user_donate_counter[chat_id] = 0  # сбрасываем счётчик
-        return True
-    return False
-
-
-# Новая функция для получения предупреждения о хостинге
-async def get_hosting_warning() -> str:
-    """Вычисляет дни до конца подписки хостинга (28 число каждого месяца по новосибирскому времени)
-    и возвращает предупреждение только с 18 по 28 число, если включено"""
-    if not await is_donate_warning_enabled():
-        return ""
-    now = datetime.now(timezone(timedelta(hours=7)))
-    if not (18 <= now.day <= 28):
-        return ""
-    end_date = datetime(now.year, now.month, 28, tzinfo=timezone(timedelta(hours=7)))
-    days_left = (end_date.date() - now.date()).days
-    if days_left > 1:
-        return f"❗Бот перестанет работать через {days_left} дней."
-    elif days_left == 1:
-        return "❗Бот перестанет работать через 1 день."
-    elif days_left == 0:
-        return "❗Бот перестанет работать сегодня."
-    return ""
-
-
 # Функция для получения текста доната
 async def get_donate_text() -> str:
-    """Возвращает текст доната с предупреждением о хостинге"""
-    hosting_warning = await get_hosting_warning()
+    """Возвращает текст доната (оставляем только этот блок)."""
     donate_base_text = f"""
 <a href="https://www.sberbank.com/sms/pbpn?requisiteNumber=79950614483"><u>Поддержите</u></a> работу бота — сервер стоит {HOSTING_PRICE}₽/мес.
 Любая сумма поможет оплатить сервер.
 Я студент, как и вы — сделал бота для удобства всем.
 """
-
-    if hosting_warning:
-        return f"{hosting_warning}\n{donate_base_text}"
-    else:
-        return donate_base_text
+    return donate_base_text
 
 
 # Функции меню
@@ -251,23 +199,7 @@ def create_stats_menu() -> InlineKeyboardMarkup:
     menu = InlineKeyboardMarkup()
     menu.row(InlineKeyboardButton("👥Список пользователей", callback_data="list_users"))
     menu.row(InlineKeyboardButton("👥Список подписчиков", callback_data="list_subscribers"))
-    menu.row(InlineKeyboardButton("💳Управление донатом", callback_data="donate_settings"))
     menu.row(InlineKeyboardButton("Меню", callback_data="back_to_main"))
-    return menu
-
-
-def create_donate_settings_menu(warning_enabled: bool) -> InlineKeyboardMarkup:
-    """Создает меню управления донатом для админа."""
-    menu = InlineKeyboardMarkup()
-
-    # Одна кнопка-переключатель
-    if warning_enabled:
-        button_text = "🔴Выключить предупреждение о донате"
-    else:
-        button_text = "🟢Включить предупреждение о донате"
-
-    menu.row(InlineKeyboardButton(button_text, callback_data="toggle_donate_warning"))
-    menu.row(InlineKeyboardButton("Назад к статистике", callback_data="admin_stats"))
     return menu
 
 
@@ -395,7 +327,6 @@ async def init_db() -> None:
         "CREATE TABLE IF NOT EXISTS schedule_updates (day TEXT PRIMARY KEY, last_hash TEXT)",
         "CREATE TABLE IF NOT EXISTS all_users (chat_id INTEGER PRIMARY KEY, first_name TEXT, last_name TEXT, username TEXT, first_interaction_date TEXT)",
         "CREATE TABLE IF NOT EXISTS interactions (chat_id INTEGER, interaction_date TEXT)",
-        "CREATE TABLE IF NOT EXISTS bot_settings (key TEXT PRIMARY KEY, value TEXT)",
         "CREATE INDEX IF NOT EXISTS idx_subscribers_chat_id ON subscribers (chat_id)",
         "CREATE INDEX IF NOT EXISTS idx_schedule_updates_day ON schedule_updates (day)",
         "CREATE INDEX IF NOT EXISTS idx_interactions_date ON interactions (interaction_date)"
@@ -514,7 +445,8 @@ async def handle_pagination(call, chat_id: int, items: List[str], page: int, lis
 
 
 async def delete_previous_schedule_messages(chat_id: int) -> None:
-    """Удаляет предыдущие сообщения с расписанием для пользователя."""
+    """Удаляет предыдущие сообщения с расписанием для пользователя.
+    Теперь не используется - расписание не удаляется при выборе нового дня."""
     if chat_id in user_schedule_messages:
         for msg_id in user_schedule_messages[chat_id]:
             try:
@@ -605,8 +537,7 @@ async def check_schedule_updates() -> None:
                                         caption = None
                                         if j == len(image_buffers) - 1:
                                             caption = f"🔄Обновлено расписание на {file_info['name']}\n📎<a href=\"{file_info['link']}\">Ссылка на расписание</a>"
-                                            if should_show_donate(subscriber_id):
-                                                caption += f"\n\n{await get_donate_text()}"
+                                            caption += f"\n\n{await get_donate_text()}"
                                         await bot.send_photo(
                                             subscriber_id, photo=img_buffer,
                                             caption=caption, parse_mode="HTML" if caption else None
@@ -634,15 +565,18 @@ async def check_schedule_updates() -> None:
 async def start_handler(message) -> None:
     await register_and_log_user(message.from_user, message.chat.id)
     is_admin = message.chat.id == ADMIN_CHAT_ID
+    greeting = f"Привет, {message.from_user.first_name}!😊"
     await bot.send_message(
         message.chat.id,
-        f"Привет, {message.from_user.first_name}!😊",
+        greeting,
         reply_markup=create_main_menu(is_admin),
+        parse_mode="HTML",
     )
 
 
 @bot.message_handler(commands=["schedule"])
 async def schedule_handler(message) -> None:
+    """Обрабатывает команду /schedule."""
     await register_and_log_user(message.from_user, message.chat.id)
     await bot.send_message(
         message.chat.id, "Выберите день недели☺️", reply_markup=create_schedule_menu()
@@ -651,6 +585,7 @@ async def schedule_handler(message) -> None:
 
 @bot.message_handler(commands=["bell"])
 async def bell_handler(message) -> None:
+    """Обрабатывает команду /bell."""
     await register_and_log_user(message.from_user, message.chat.id)
     await bot.send_message(
         message.chat.id, "Информация о звонках🫨", reply_markup=create_calls_menu()
@@ -659,6 +594,7 @@ async def bell_handler(message) -> None:
 
 @bot.message_handler(commands=["mailing"])
 async def mailing_handler(message) -> None:
+    """Обрабатывает команду /mailing."""
     await register_and_log_user(message.from_user, message.chat.id)
     subscribed = await is_subscribed(message.chat.id)
     status_text = (
@@ -671,6 +607,7 @@ async def mailing_handler(message) -> None:
 
 @bot.message_handler(commands=["stats"])
 async def stats_handler(message) -> None:
+    """Обрабатывает команду /stats (работает и в группах с @botname)."""
     if message.chat.id != ADMIN_CHAT_ID:
         await bot.send_message(message.chat.id, "Доступ запрещен")
         return
@@ -707,11 +644,7 @@ async def schedule_day_handler(call: CallbackQuery) -> None:
             return
         file_info = SCHEDULE_FILES[day]
         await bot.answer_callback_query(call.id, text="🔄Загружается расписание...")
-        try:
-            await bot.delete_message(call.message.chat.id, call.message.message_id)
-        except Exception as e:
-            print(f"Error deleting menu: {e}")
-        await delete_previous_schedule_messages(call.message.chat.id)
+        # Не удаляем меню и не удаляем предыдущие расписания - все остается
         cached_images = await get_cached_images(day)
         if cached_images:
             image_buffers = cached_images
@@ -736,19 +669,26 @@ async def schedule_day_handler(call: CallbackQuery) -> None:
             await cache_images(day, image_buffers, current_hash)
         if call.message.chat.id not in user_schedule_messages:
             user_schedule_messages[call.message.chat.id] = []
+        # Отправляем все изображения; к последнему прикрепляем клавиатуру с выбором дней и меню
         for i, img_buffer in enumerate(image_buffers):
             img_buffer.seek(0)
             caption = None
             if i == len(image_buffers) - 1:
-                caption = f"🔄Обновлено расписание на {file_info['name']}\n📎<a href=\"{file_info['link']}\">Ссылка на расписание</a>"
-                if should_show_donate(call.message.chat.id):
-                    caption += f"\n\n{await get_donate_text()}"
+                # Для ручного запроса показываем простой текст "Расписание на ..."
+                caption = f"📚Расписание на {file_info['name']}\n📎<a href=\"{file_info['link']}\">Ссылка на расписание</a>"
+                caption += f"\n\n{await get_donate_text()}"
+            # К последнему изображению добавляем клавиатуру для повторного выбора дней и возврата в меню
+            reply_markup = create_schedule_menu() if i == len(image_buffers) - 1 else None
             sent_message = await bot.send_photo(
-                call.message.chat.id, photo=img_buffer,
-                caption=caption, parse_mode="HTML" if caption else None,
-                reply_markup=create_schedule_menu() if i == len(image_buffers) - 1 else None
+                call.message.chat.id,
+                photo=img_buffer,
+                caption=caption,
+                parse_mode="HTML" if caption else None,
+                reply_markup=reply_markup,
             )
             user_schedule_messages[call.message.chat.id].append(sent_message.message_id)
+
+        # Не отправляем дополнительное сообщение после расписания
     except Exception as callback_error:
         await bot.answer_callback_query(call.id, text="Ошибка. Попробуйте позже.")
         print(f"Error in schedule_day_handler: {callback_error}")
@@ -793,40 +733,6 @@ async def callback_query_handler(call: CallbackQuery) -> None:
                                               'users': admin_lists_cache.get(chat_id, {}).get('users', [])}
             subscribers_list = admin_lists_cache.get(chat_id, {}).get('subscribers', [])
             await handle_pagination(call, chat_id, subscribers_list, page, "list_subscribers", "подписчиков")
-            return
-        elif call.data == "donate_settings":
-            if chat_id != ADMIN_CHAT_ID:
-                await bot.answer_callback_query(call.id, text="Доступ запрещен")
-                return
-
-            warning_enabled = await is_donate_warning_enabled()
-
-            await bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=call.message.message_id,
-                text=build_donate_settings_text(warning_enabled),
-                reply_markup=create_donate_settings_menu(warning_enabled),
-            )
-            return
-        elif call.data == "toggle_donate_warning":
-            if chat_id != ADMIN_CHAT_ID:
-                await bot.answer_callback_query(call.id, text="Доступ запрещен")
-                return
-
-            current_status = await is_donate_warning_enabled()
-            new_status = not current_status
-
-            await set_setting("donate_warning", "1" if new_status else "0")
-
-            status_text = "включено" if new_status else "выключено"
-            await bot.answer_callback_query(call.id, text=f"Предупреждение {status_text}")
-
-            await bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=call.message.message_id,
-                text=build_donate_settings_text(new_status),
-                reply_markup=create_donate_settings_menu(new_status),
-            )
             return
         if call.data == "mailing":
             subscribed = await is_subscribed(chat_id)
@@ -873,7 +779,7 @@ async def callback_query_handler(call: CallbackQuery) -> None:
                 reply_markup=create_mailing_menu(False),
             )
         elif call.data == "back_to_main":
-            await delete_previous_schedule_messages(chat_id)
+            # Убрано удаление расписания при возврате в меню
             is_admin = chat_id == ADMIN_CHAT_ID
             try:
                 await bot.edit_message_text(
@@ -906,13 +812,83 @@ async def set_bot_commands() -> None:
     )
 
 
+async def setup_webhook() -> None:
+    """Настраивает webhook для бота."""
+    if WEBHOOK_URL:
+        await bot.set_webhook(url=WEBHOOK_URL)
+        print(f"Webhook установлен: {WEBHOOK_URL}")
+    else:
+        print("WEBHOOK_URL не установлен, используйте polling или установите переменную окружения")
+
+
+async def remove_webhook() -> None:
+    """Удаляет webhook."""
+    await bot.remove_webhook()
+    print("Webhook удален")
+
+
+def create_flask_app() -> Flask:
+    """Создает Flask приложение для обработки webhook."""
+    if not FLASK_AVAILABLE:
+        raise ImportError("Flask не установлен. Установите через: pip install flask")
+    app = Flask(__name__)
+
+    @app.route(f'/webhook/{API_TOKEN}', methods=['POST'])
+    def webhook():
+        """Обработчик webhook от Telegram."""
+        if request.headers.get('content-type') == 'application/json':
+            json_string = request.get_data().decode('utf-8')
+            update = bot.json_to_update(json_string)
+            # Создаем задачу для обработки обновления в существующем event loop
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(bot.process_new_updates([update]))
+            finally:
+                loop.close()
+            return '', 200
+        return '', 403
+
+    @app.route('/', methods=['GET'])
+    def index():
+        """Проверка работоспособности."""
+        return 'Bot is running', 200
+
+    return app
+
+
 async def main() -> None:
     """Главная функция запуска бота."""
     await init_db()
     await set_bot_commands()
     asyncio.create_task(check_schedule_updates())
     asyncio.create_task(log_stats_periodically())
-    await bot.polling(non_stop=True, skip_pending=True)
+    
+    if USE_WEBHOOK and WEBHOOK_URL:
+        # Настройка webhook
+        if not FLASK_AVAILABLE:
+            print("Ошибка: Flask не установлен. Webhook требует Flask.")
+            print("Установите через: pip install flask")
+            print("Переключаюсь на polling режим...")
+            await bot.polling(non_stop=True, skip_pending=True)
+            return
+        await setup_webhook()
+        # Запуск Flask сервера в отдельном потоке
+        app = create_flask_app()
+        flask_thread = Thread(target=lambda: app.run(host=WEBHOOK_LISTEN, port=WEBHOOK_PORT, debug=False))
+        flask_thread.daemon = True
+        flask_thread.start()
+        print(f"Webhook сервер запущен на {WEBHOOK_LISTEN}:{WEBHOOK_PORT}")
+        # Держим основной поток активным
+        try:
+            while True:
+                await asyncio.sleep(3600)
+        except KeyboardInterrupt:
+            await remove_webhook()
+    else:
+        # Использование polling (старый способ)
+        print("Используется polling (для webhook установите USE_WEBHOOK=true и WEBHOOK_URL)")
+        await bot.polling(non_stop=True, skip_pending=True)
 
 
 async def log_stats_periodically() -> None:
