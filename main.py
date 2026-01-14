@@ -23,12 +23,15 @@ except ImportError:
     request = None  # type: ignore
 
 # Токен бота
-API_TOKEN = os.getenv("API_TOKEN")
+API_TOKEN = os.getenv("API_TOKEN", "8378335500:AAHDc5rrc4hSlnUG1vCrOw-BtAmH9iAe80g")  # Fallback для локального теста
+if not API_TOKEN:
+    raise ValueError("API_TOKEN не установлен! Установите переменную окружения API_TOKEN.")
 bot = AsyncTeleBot(API_TOKEN)
 # ID админа
 ADMIN_CHAT_ID = 6986627524
 # Webhook настройки
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")  # URL для webhook (например, https://yourdomain.com/webhook)
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")  # Bothost сам подставит домен (например, https://your-bot.bothost.ru)
+WEBHOOK_PATH = f"/webhook/{API_TOKEN}"  # Путь для webhook
 WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", "8443"))  # Порт для webhook
 WEBHOOK_LISTEN = os.getenv("WEBHOOK_LISTEN", "0.0.0.0")  # Адрес для прослушивания
 USE_WEBHOOK = os.getenv("USE_WEBHOOK", "false").lower() == "true"  # Переключатель между webhook и polling
@@ -815,8 +818,9 @@ async def set_bot_commands() -> None:
 async def setup_webhook() -> None:
     """Настраивает webhook для бота."""
     if WEBHOOK_URL:
-        await bot.set_webhook(url=WEBHOOK_URL)
-        print(f"Webhook установлен: {WEBHOOK_URL}")
+        full_webhook_url = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
+        await bot.set_webhook(url=full_webhook_url, drop_pending_updates=True)
+        print(f"Webhook установлен: {full_webhook_url}")
     else:
         print("WEBHOOK_URL не установлен, используйте polling или установите переменную окружения")
 
@@ -833,7 +837,7 @@ def create_flask_app() -> Flask:
         raise ImportError("Flask не установлен. Установите через: pip install flask")
     app = Flask(__name__)
 
-    @app.route(f'/webhook/{API_TOKEN}', methods=['POST'])
+    @app.route(WEBHOOK_PATH, methods=['POST'])
     def webhook():
         """Обработчик webhook от Telegram."""
         if request.headers.get('content-type') == 'application/json':
