@@ -13,7 +13,9 @@ from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 import random
 
 # Токен бота
-API_TOKEN = os.getenv("API_TOKEN")  # Fallback для локального теста
+API_TOKEN = os.getenv("API_TOKEN")
+if not API_TOKEN:
+    raise RuntimeError("Переменная окружения API_TOKEN не установлена. Задай её на хостинге.")
 bot = AsyncTeleBot(API_TOKEN)
 # ID админа
 ADMIN_CHAT_ID = 6986627524
