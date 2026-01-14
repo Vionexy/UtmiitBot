@@ -11,30 +11,12 @@ import aiosqlite
 from telebot.async_telebot import AsyncTeleBot
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, CallbackQuery
 import random
-from threading import Thread
-
-# Условный импорт Flask (только если используется webhook)
-try:
-    from flask import Flask, request  # pyright: ignore[reportMissingImports]
-    FLASK_AVAILABLE = True
-except ImportError:
-    FLASK_AVAILABLE = False
-    Flask = None  # type: ignore
-    request = None  # type: ignore
 
 # Токен бота
-API_TOKEN = os.getenv("API_TOKEN", "8378335500:AAHDc5rrc4hSlnUG1vCrOw-BtAmH9iAe80g")  # Fallback для локального теста
-if not API_TOKEN:
-    raise ValueError("API_TOKEN не установлен! Установите переменную окружения API_TOKEN.")
+API_TOKEN = os.getenv("API_TOKEN")  # Fallback для локального теста
 bot = AsyncTeleBot(API_TOKEN)
 # ID админа
 ADMIN_CHAT_ID = 6986627524
-# Webhook настройки
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")  # Bothost сам подставит домен (например, https://your-bot.bothost.ru)
-WEBHOOK_PATH = f"/webhook/{API_TOKEN}"  # Путь для webhook
-WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", "8443"))  # Порт для webhook
-WEBHOOK_LISTEN = os.getenv("WEBHOOK_LISTEN", "0.0.0.0")  # Адрес для прослушивания
-USE_WEBHOOK = os.getenv("USE_WEBHOOK", "false").lower() == "true"  # Переключатель между webhook и polling
 # ID файлов для скачивания и их метаданные
 SCHEDULE_FILES = {
     "monday": {
@@ -815,84 +797,14 @@ async def set_bot_commands() -> None:
     )
 
 
-async def setup_webhook() -> None:
-    """Настраивает webhook для бота."""
-    if WEBHOOK_URL:
-        full_webhook_url = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
-        await bot.set_webhook(url=full_webhook_url, drop_pending_updates=True)
-        print(f"Webhook установлен: {full_webhook_url}")
-    else:
-        print("WEBHOOK_URL не установлен, используйте polling или установите переменную окружения")
-
-
-async def remove_webhook() -> None:
-    """Удаляет webhook."""
-    await bot.remove_webhook()
-    print("Webhook удален")
-
-
-def create_flask_app() -> Flask:
-    """Создает Flask приложение для обработки webhook."""
-    if not FLASK_AVAILABLE:
-        raise ImportError("Flask не установлен. Установите через: pip install flask")
-    app = Flask(__name__)
-
-    @app.route(WEBHOOK_PATH, methods=['POST'])
-    def webhook():
-        """Обработчик webhook от Telegram."""
-        if request.headers.get('content-type') == 'application/json':
-            json_string = request.get_data().decode('utf-8')
-            update = bot.json_to_update(json_string)
-            # Создаем задачу для обработки обновления в существующем event loop
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(bot.process_new_updates([update]))
-            finally:
-                loop.close()
-            return '', 200
-        return '', 403
-
-    @app.route('/', methods=['GET'])
-    def index():
-        """Проверка работоспособности."""
-        return 'Bot is running', 200
-
-    return app
-
-
 async def main() -> None:
     """Главная функция запуска бота."""
     await init_db()
     await set_bot_commands()
     asyncio.create_task(check_schedule_updates())
     asyncio.create_task(log_stats_periodically())
-    
-    if USE_WEBHOOK and WEBHOOK_URL:
-        # Настройка webhook
-        if not FLASK_AVAILABLE:
-            print("Ошибка: Flask не установлен. Webhook требует Flask.")
-            print("Установите через: pip install flask")
-            print("Переключаюсь на polling режим...")
-            await bot.polling(non_stop=True, skip_pending=True)
-            return
-        await setup_webhook()
-        # Запуск Flask сервера в отдельном потоке
-        app = create_flask_app()
-        flask_thread = Thread(target=lambda: app.run(host=WEBHOOK_LISTEN, port=WEBHOOK_PORT, debug=False))
-        flask_thread.daemon = True
-        flask_thread.start()
-        print(f"Webhook сервер запущен на {WEBHOOK_LISTEN}:{WEBHOOK_PORT}")
-        # Держим основной поток активным
-        try:
-            while True:
-                await asyncio.sleep(3600)
-        except KeyboardInterrupt:
-            await remove_webhook()
-    else:
-        # Использование polling (старый способ)
-        print("Используется polling (для webhook установите USE_WEBHOOK=true и WEBHOOK_URL)")
-        await bot.polling(non_stop=True, skip_pending=True)
+    # Запуск в режиме polling (проще и без вебхука)
+    await bot.polling(non_stop=True, skip_pending=True)
 
 
 async def log_stats_periodically() -> None:
