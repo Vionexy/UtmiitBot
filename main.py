@@ -311,7 +311,7 @@ async def init_db() -> None:
     conn = await get_db_connection()
     tables = [
         "CREATE TABLE IF NOT EXISTS subscribers (chat_id INTEGER PRIMARY KEY, joined_date TEXT)",
-        "CREATE TABLE IF NOT EXISTS schedule_updates (day TEXT PRIMARY KEY, last_hash TEXT)",
+        "CREATE TABLE IF NOT EXISTS schedule_updates (day TEXT PRIMARY KEY, last_hash TEXT, last_sent_date TEXT)",
         "CREATE TABLE IF NOT EXISTS all_users (chat_id INTEGER PRIMARY KEY, first_name TEXT, last_name TEXT, username TEXT, first_interaction_date TEXT)",
         "CREATE TABLE IF NOT EXISTS interactions (chat_id INTEGER, interaction_date TEXT)",
         "CREATE INDEX IF NOT EXISTS idx_subscribers_chat_id ON subscribers (chat_id)",
@@ -327,6 +327,14 @@ async def init_db() -> None:
             await conn.execute("ALTER TABLE all_users ADD COLUMN username TEXT")
     except Exception as e:
         print(f"Error in init_db migration: {e}")
+    try:
+        # Миграция: добавляем поле last_sent_date если его нет
+        cursor = await conn.execute("PRAGMA table_info(schedule_updates)")
+        columns = [row[1] for row in await cursor.fetchall()]
+        if "last_sent_date" not in columns:
+            await conn.execute("ALTER TABLE schedule_updates ADD COLUMN last_sent_date TEXT")
+    except Exception as e:
+        print(f"Error in init_db migration for last_sent_date: {e}")
     await conn.commit()
     await conn.close()
 
@@ -358,6 +366,24 @@ async def update_last_hash(day: str, hash_value: str) -> None:
     """Обновляет хэш содержимого в базе."""
     await db_execute("INSERT OR REPLACE INTO schedule_updates (day, last_hash) VALUES (?, ?)",
                      (day, hash_value), commit=True)
+
+
+async def get_last_sent_date(day: str) -> Optional[str]:
+    """Получает дату последней отправки расписания для дня."""
+    result = await db_execute("SELECT last_sent_date FROM schedule_updates WHERE day = ?", (day,), fetch=True)
+    return result[0][0] if result and result[0][0] else None
+
+
+async def update_last_sent_date(day: str, date: str) -> None:
+    """Обновляет дату последней отправки расписания."""
+    await db_execute("UPDATE schedule_updates SET last_sent_date = ? WHERE day = ?",
+                     (date, day), commit=True)
+
+
+async def update_schedule_sent(day: str, hash_value: str, sent_date: str) -> None:
+    """Обновляет и хэш, и дату отправки одновременно."""
+    await db_execute("INSERT OR REPLACE INTO schedule_updates (day, last_hash, last_sent_date) VALUES (?, ?, ?)",
+                     (day, hash_value, sent_date), commit=True)
 
 
 async def get_all_subscribers() -> List[int]:
@@ -502,7 +528,19 @@ async def check_schedule_updates() -> None:
                     continue
                 current_hash = get_file_hash(pdf_content)
                 last_hash = await get_last_hash(day_to_send)
-                if current_hash != last_hash or last_hash is None:
+                last_sent_date = await get_last_sent_date(day_to_send)
+                current_date = current_time.strftime("%Y-%m-%d")
+                
+                # Проверяем: расписание изменилось (новый хэш)
+                schedule_changed = (current_hash != last_hash or last_hash is None)
+                
+                # Отправляем если:
+                # 1. Расписание изменилось (новый хэш) - отправляем при каждом обновлении
+                # 2. Расписание не изменилось, но еще не отправлялось сегодня - отправляем первый раз за день
+                # Не отправляем если: хэш тот же и уже отправлялось сегодня (избегаем спама)
+                should_send = schedule_changed or (last_sent_date != current_date)
+                
+                if should_send:
                     try:
                         image_buffers = await pdf_to_images(pdf_content)
                         await cache_images(day_to_send, image_buffers, current_hash)
@@ -534,7 +572,8 @@ async def check_schedule_updates() -> None:
                                 except Exception as send_error:
                                     failed_sends += 1
                                     print(f"Error sending to subscriber {subscriber_id}: {send_error}")
-                        await update_last_hash(day_to_send, current_hash)
+                        # Обновляем и хэш, и дату отправки одновременно
+                        await update_schedule_sent(day_to_send, current_hash, current_date)
                     except Exception as processing_error:
                         print(f"Error processing file {day_to_send}: {processing_error}")
                 else:
