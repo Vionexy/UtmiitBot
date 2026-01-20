@@ -553,6 +553,11 @@ async def check_schedule_updates() -> None:
                                 if len(subscribers) < 100
                                 else 1.0  # Увеличиваем задержку для больших списков
                             )
+                            # Определяем текст заголовка: "Обновлено" только если расписание действительно изменилось
+                            if schedule_changed:
+                                schedule_caption = f"🔄Обновлено расписание на {file_info['name']}"
+                            else:
+                                schedule_caption = f"📚Расписание на {file_info['name']}"
                             for i, subscriber_id in enumerate(subscribers):
                                 try:
                                     if i > 0:
@@ -561,7 +566,7 @@ async def check_schedule_updates() -> None:
                                         img_buffer.seek(0)
                                         caption = None
                                         if j == len(image_buffers) - 1:
-                                            caption = f"🔄Обновлено расписание на {file_info['name']}\n📎<a href=\"{file_info['link']}\">Ссылка на расписание</a>"
+                                            caption = f"{schedule_caption}\n📎<a href=\"{file_info['link']}\">Ссылка на расписание</a>"
                                             caption += f"\n\n{await get_donate_text()}"
                                         await bot.send_photo(
                                             subscriber_id, photo=img_buffer,
