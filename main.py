@@ -159,10 +159,8 @@ async def build_stats_text() -> str:
 # Функция для получения текста доната
 async def get_donate_text() -> str:
     """Возвращает текст доната (оставляем только этот блок)."""
-    donate_base_text = f"""
-<a href="https://www.sberbank.com/sms/pbpn?requisiteNumber=79950614483"><u>Поддержите</u></a> работу бота — сервер стоит {HOSTING_PRICE}₽/мес.
-Любая сумма поможет оплатить сервер.
-Я студент, как и вы — сделал бота для удобства всем.
+    donate_base_text = """
+<a href="https://www.sberbank.com/sms/pbpn?requisiteNumber=79950614483"><u>Поддержите</u></a> бота для стабильной работы❤️
 """
     return donate_base_text
 
