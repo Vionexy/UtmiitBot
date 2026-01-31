@@ -375,9 +375,9 @@ def calls_menu():
 def mailing_menu(subscribed):
     menu = InlineKeyboardMarkup()
     if subscribed:
-        menu.row(InlineKeyboardButton("Отписаться от рассылки", callback_data="unsubscribe"))
+        menu.row(InlineKeyboardButton("Отписаться", callback_data="unsubscribe"))
     else:
-        menu.row(InlineKeyboardButton("Подписаться на рассылку", callback_data="subscribe"))
+        menu.row(InlineKeyboardButton("Подписаться", callback_data="subscribe"))
     menu.row(InlineKeyboardButton("Меню", callback_data="back_to_main"))
     return menu
 
@@ -406,7 +406,7 @@ def pagination_menu(list_type, page, total_pages):
 
 
 def get_donate_text():
-    return '<a href="https://www.sberbank.com/sms/pbpn?requisiteNumber=79950614483"><u>Поддержите</u></a> бота для стабильной работы❤️'
+    return '❤️<a href="https://www.sberbank.com/sms/pbpn?requisiteNumber=79950614483">Поддержать бота</a> - сервер платный, буду благодарен за помощь!'
 
 
 # рассылка расписания
