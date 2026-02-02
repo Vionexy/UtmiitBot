@@ -375,9 +375,9 @@ def calls_menu():
 def mailing_menu(subscribed):
     menu = InlineKeyboardMarkup()
     if subscribed:
-        menu.row(InlineKeyboardButton("Отписаться от рассылки", callback_data="unsubscribe"))
+        menu.row(InlineKeyboardButton("Отписаться", callback_data="unsubscribe"))
     else:
-        menu.row(InlineKeyboardButton("Подписаться на рассылку", callback_data="subscribe"))
+        menu.row(InlineKeyboardButton("Подписаться", callback_data="subscribe"))
     menu.row(InlineKeyboardButton("Меню", callback_data="back_to_main"))
     return menu
 
