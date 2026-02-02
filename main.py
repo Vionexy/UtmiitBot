@@ -406,8 +406,7 @@ def pagination_menu(list_type, page, total_pages):
 
 
 def get_donate_text():
-    return '<a href="https://www.sberbank.com/sms/pbpn?requisiteNumber=79950614483"><u>Поддержите</u></a> бота для стабильной работы❤️'
-
+    return '❤️<a href="https://www.sberbank.com/sms/pbpn?requisiteNumber=79950614483">Поддержать бота</a> - сервер платный, буду благодарен за помощь!'
 
 # рассылка расписания
 
