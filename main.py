@@ -18,7 +18,7 @@ if not API_TOKEN:
 bot = AsyncTeleBot(API_TOKEN)
 ADMIN_CHAT_ID = 6986627524
 HOSTING_PRICE = 150
-ITEMS_PER_PAGE = 50 
+ITEMS_PER_PAGE = 50
 
 # файлы расписания с гугл диска
 SCHEDULE_FILES = {
@@ -111,6 +111,7 @@ CALL_SCHEDULE = {
 
 # кэш картинок
 schedule_cache = {}
+admin_lists_cache = {}
 
 
 # база данных
@@ -261,41 +262,28 @@ async def get_stats():
     return total_users, subscribers, daily
 
 
-async def get_users_count(subscribers_only=False):
+async def get_all_users_list():
     conn = await get_db()
-    if subscribers_only:
-        query = "SELECT COUNT(u.chat_id) FROM all_users u INNER JOIN subscribers s ON u.chat_id = s.chat_id WHERE u.username IS NOT NULL AND u.username != ''"
-        cursor = await conn.execute(query)
-    else:
-        query = "SELECT COUNT(*) FROM all_users WHERE username IS NOT NULL AND username != ''"
-        cursor = await conn.execute(query)
-
-    count = (await cursor.fetchone())[0]
+    cursor = await conn.execute("""
+        SELECT username, first_name, last_name 
+        FROM all_users 
+        WHERE username IS NOT NULL AND username != '' 
+        ORDER BY first_interaction_date DESC
+    """)
+    rows = await cursor.fetchall()
     await conn.close()
-    return count
+    return [f"@{row[0]} ({row[1]} {row[2]})" for row in rows]
 
 
-async def get_users_page(page, page_size, subscribers_only=False):
+async def get_subscribers_list():
     conn = await get_db()
-    offset = (page - 1) * page_size
-    if subscribers_only:
-        query = """
-            SELECT u.username, u.first_name, u.last_name 
-            FROM all_users u
-            INNER JOIN subscribers s ON u.chat_id = s.chat_id
-            WHERE u.username IS NOT NULL AND u.username != ''
-            ORDER BY s.joined_date DESC
-            LIMIT ? OFFSET ?
-        """
-    else:
-        query = """
-            SELECT username, first_name, last_name 
-            FROM all_users 
-            WHERE username IS NOT NULL AND username != '' 
-            ORDER BY first_interaction_date DESC
-            LIMIT ? OFFSET ?
-        """
-    cursor = await conn.execute(query, (page_size, offset))
+    cursor = await conn.execute("""
+        SELECT u.username, u.first_name, u.last_name 
+        FROM all_users u
+        INNER JOIN subscribers s ON u.chat_id = s.chat_id
+        WHERE u.username IS NOT NULL AND u.username != ''
+        ORDER BY s.joined_date DESC
+    """)
     rows = await cursor.fetchall()
     await conn.close()
     return [f"@{row[0]} ({row[1]} {row[2]})" for row in rows]
@@ -387,9 +375,9 @@ def calls_menu():
 def mailing_menu(subscribed):
     menu = InlineKeyboardMarkup()
     if subscribed:
-        menu.row(InlineKeyboardButton("Отписаться", callback_data="unsubscribe"))
+        menu.row(InlineKeyboardButton("Отписаться от рассылки", callback_data="unsubscribe"))
     else:
-        menu.row(InlineKeyboardButton("Подписаться", callback_data="subscribe"))
+        menu.row(InlineKeyboardButton("Подписаться на рассылку", callback_data="subscribe"))
     menu.row(InlineKeyboardButton("Меню", callback_data="back_to_main"))
     return menu
 
@@ -418,7 +406,7 @@ def pagination_menu(list_type, page, total_pages):
 
 
 def get_donate_text():
-    return '❤️<a href="https://www.sberbank.com/sms/pbpn?requisiteNumber=79950614483">Поддержать бота</a> - сервер платный, буду благодарен за помощь!'
+    return '<a href="https://www.sberbank.com/sms/pbpn?requisiteNumber=79950614483"><u>Поддержите</u></a> бота для стабильной работы❤️'
 
 
 # рассылка расписания
@@ -444,7 +432,7 @@ async def check_schedule_updates():
             }.get(weekday)
 
             if not next_day or next_day not in SCHEDULE_FILES:
-                await asyncio.sleep(900)
+                await asyncio.sleep(600)  # 10 минут
                 continue
 
             file_info = SCHEDULE_FILES[next_day]
@@ -453,7 +441,7 @@ async def check_schedule_updates():
             pdf_content, error = await download_pdf(file_info["id"])
             if not pdf_content:
                 print(f"Ошибка скачивания {next_day}: {error}")
-                await asyncio.sleep(900)
+                await asyncio.sleep(600)  # 10 минут
                 continue
 
             current_hash = get_file_hash(pdf_content)
@@ -465,9 +453,10 @@ async def check_schedule_updates():
 
             if schedule_changed:
                 # в картинки
-                loop = asyncio.get_running_loop()
+                loop = asyncio.get_event_loop()
                 images = await loop.run_in_executor(None, pdf_to_images, pdf_content)
                 schedule_cache[next_day] = images
+                schedule_cache[f"{next_day}_hash"] = current_hash
 
                 # отправляем всем подписчикам
                 subscribers = await get_all_subscribers()
@@ -499,7 +488,7 @@ async def check_schedule_updates():
                 # записываем в базу
                 await update_schedule_sent(next_day, current_hash, today)
 
-            await asyncio.sleep(900)
+            await asyncio.sleep(600)  # 10 минут
 
         except Exception as e:
             print(f"Ошибка в check_schedule_updates: {e}")
@@ -608,27 +597,36 @@ async def schedule_day(call):
     file_info = SCHEDULE_FILES[day]
     await bot.answer_callback_query(call.id, text="Загружаю...")
 
-    # кэш
-    images = schedule_cache.get(day)
+    # проверяем актуальность кэша
+    pdf_content, error = await download_pdf(file_info["id"])
+    if not pdf_content:
+        await bot.send_message(
+            chat_id,
+            f"❌Не удалось загрузить\n📎<a href=\"{file_info['link']}\">Ссылка на расписание</a>",
+            reply_markup=schedule_menu(),
+            parse_mode="HTML"
+        )
+        return
 
-    if not images:
-        pdf_content, error = await download_pdf(file_info["id"])
-        if not pdf_content:
-            await bot.send_message(
-                chat_id,
-                f"❌Не удалось загрузить\n📎<a href=\"{file_info['link']}\">Ссылка на расписание</a>",
-                reply_markup=schedule_menu(),
-                parse_mode="HTML"
-            )
-            return
+    current_hash = get_file_hash(pdf_content)
+    cached_images = schedule_cache.get(day)
 
-        loop = asyncio.get_running_loop()
+    # если кэша нет или файл изменился - обновляем
+    if not cached_images or current_hash != schedule_cache.get(f"{day}_hash"):
+        loop = asyncio.get_event_loop()
         images = await loop.run_in_executor(None, pdf_to_images, pdf_content)
         schedule_cache[day] = images
+        schedule_cache[f"{day}_hash"] = current_hash
+    else:
+        images = cached_images
 
     # шлем
     for i, img in enumerate(images):
+        # создаем новый BytesIO из содержимого
         img.seek(0)
+        img_copy = BytesIO(img.read())
+        img.seek(0)  # возвращаем позицию для следующего использования
+
         caption = None
         markup = None
 
@@ -636,7 +634,7 @@ async def schedule_day(call):
             caption = f"📚Расписание на {file_info['name']}\n📎<a href=\"{file_info['link']}\">Ссылка на расписание</a>\n\n{get_donate_text()}"
             markup = schedule_menu()
 
-        await bot.send_photo(chat_id, photo=img, caption=caption, parse_mode="HTML" if caption else None,
+        await bot.send_photo(chat_id, photo=img_copy, caption=caption, parse_mode="HTML" if caption else None,
                              reply_markup=markup)
 
 
@@ -672,11 +670,17 @@ async def callback_handler(call):
 
         page = 1 if call.data == "list_users" else int(call.data.split("*")[-1])
 
-        total_items = await get_users_count(subscribers_only=False)
-        total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
-        page_items = await get_users_page(page, ITEMS_PER_PAGE, subscribers_only=False)
+        if call.data == "list_users":
+            users_list = await get_all_users_list()
+            admin_lists_cache[chat_id] = {'users': users_list}
+        else:
+            users_list = admin_lists_cache.get(chat_id, {}).get('users', [])
 
-        text = f"👥 Список пользователей (страница {page}/{total_pages or 1}):\n\n" + "\n".join(page_items)
+        total_pages = (len(users_list) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+        start = (page - 1) * ITEMS_PER_PAGE
+        page_items = users_list[start:start + ITEMS_PER_PAGE]
+
+        text = f"👥 Список пользователей (страница {page}/{total_pages}):\n\n" + "\n".join(page_items)
         markup = pagination_menu("list_users", page, total_pages)
 
         await bot.edit_message_text(
@@ -694,11 +698,17 @@ async def callback_handler(call):
 
         page = 1 if call.data == "list_subscribers" else int(call.data.split("*")[-1])
 
-        total_items = await get_users_count(subscribers_only=True)
-        total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
-        page_items = await get_users_page(page, ITEMS_PER_PAGE, subscribers_only=True)
+        if call.data == "list_subscribers":
+            subs_list = await get_subscribers_list()
+            admin_lists_cache[chat_id] = {'subscribers': subs_list}
+        else:
+            subs_list = admin_lists_cache.get(chat_id, {}).get('subscribers', [])
 
-        text = f"👥 Список подписчиков (страница {page}/{total_pages or 1}):\n\n" + "\n".join(page_items)
+        total_pages = (len(subs_list) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+        start = (page - 1) * ITEMS_PER_PAGE
+        page_items = subs_list[start:start + ITEMS_PER_PAGE]
+
+        text = f"👥 Список подписчиков (страница {page}/{total_pages}):\n\n" + "\n".join(page_items)
         markup = pagination_menu("list_subscribers", page, total_pages)
 
         await bot.edit_message_text(
