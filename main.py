@@ -324,7 +324,7 @@ def menu_calls():
     m = InlineKeyboardMarkup()
     m.add(InlineKeyboardButton("Понедельник", callback_data="monday_calls"),
           InlineKeyboardButton("Четверг", callback_data="thursday_calls"),
-          InlineKeyboardButton("Другие", callback_data="other_calls"))
+          InlineKeyboardButton("Другие дни", callback_data="other_calls"))
     m.row(InlineKeyboardButton("Меню", callback_data="main"))
     return m
 
