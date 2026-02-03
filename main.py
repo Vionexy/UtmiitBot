@@ -9,785 +9,711 @@ from datetime import datetime, timezone, timedelta
 import aiosqlite
 from telebot.async_telebot import AsyncTeleBot
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
+from collections import defaultdict
+import time
 
-# настройки
-API_TOKEN = os.getenv("API_TOKEN")
+# токен бота
+API_TOKEN = "8378335500:AAHeCs6vca4f_JKTGvAylAc9YteircOYVeU"
 if not API_TOKEN:
-    raise RuntimeError("Переменная окружения API_TOKEN не установлена. Задай её на хостинге.")
+    raise RuntimeError("Нужен API_TOKEN")
 
 bot = AsyncTeleBot(API_TOKEN)
-ADMIN_CHAT_ID = 6986627524
-HOSTING_PRICE = 150
-ITEMS_PER_PAGE = 50
+ADMIN_ID = 6986627524
 
-# файлы расписания с гугл диска
+# расписания с гугла
 SCHEDULE_FILES = {
-    "monday": {
-        "id": "1d7xrNLd8qpde_5jLvBdJjG9e3eOsjohK",
-        "name": "понедельник",
-        "link": "https://drive.google.com/file/d/1d7xrNLd8qpde_5jLvBdJjG9e3eOsjohK/view?usp=sharing"
-    },
-    "tuesday": {
-        "id": "1qHNHC7uwXdECuEMfDoPiuv5bX0Ip0OpQ",
-        "name": "вторник",
-        "link": "https://drive.google.com/file/d/1qHNHC7uwXdECuEMfDoPiuv5bX0Ip0OpQ/view?usp=sharing"
-    },
-    "wednesday": {
-        "id": "1hWMqMdeU2rcrNMx4jbOCr5ofGixsIJwA",
-        "name": "среду",
-        "link": "https://drive.google.com/file/d/1hWMqMdeU2rcrNMx4jbOCr5ofGixsIJwA/view?usp=sharing"
-    },
-    "thursday": {
-        "id": "1O649rLM_VuBO31VF49noXfp1Evr-XfCN",
-        "name": "четверг",
-        "link": "https://drive.google.com/file/d/1O649rLM_VuBO31VF49noXfp1Evr-XfCN/view?usp=sharing"
-    },
-    "friday": {
-        "id": "1YmQGiirdBryJlI3tx0SdU-g1gGm-6AaW",
-        "name": "пятницу",
-        "link": "https://drive.google.com/file/d/1YmQGiirdBryJlI3tx0SdU-g1gGm-6AaW/view?usp=sharing"
-    },
-    "saturday": {
-        "id": "1hkXSDN-Dz86QGeyjhLZ7jlvSd9sMwmex",
-        "name": "субботу",
-        "link": "https://drive.google.com/file/d/1hkXSDN-Dz86QGeyjhLZ7jlvSd9sMwmex/view?usp=sharing"
-    }
+    "monday": {"id": "1d7xrNLd8qpde_5jLvBdJjG9e3eOsjohK", "name": "понедельник",
+               "link": "https://drive.google.com/file/d/1d7xrNLd8qpde_5jLvBdJjG9e3eOsjohK/view"},
+    "tuesday": {"id": "1qHNHC7uwXdECuEMfDoPiuv5bX0Ip0OpQ", "name": "вторник",
+                "link": "https://drive.google.com/file/d/1qHNHC7uwXdECuEMfDoPiuv5bX0Ip0OpQ/view"},
+    "wednesday": {"id": "1hWMqMdeU2rcrNMx4jbOCr5ofGixsIJwA", "name": "среду",
+                  "link": "https://drive.google.com/file/d/1hWMqMdeU2rcrNMx4jbOCr5ofGixsIJwA/view"},
+    "thursday": {"id": "1O649rLM_VuBO31VF49noXfp1Evr-XfCN", "name": "четверг",
+                 "link": "https://drive.google.com/file/d/1O649rLM_VuBO31VF49noXfp1Evr-XfCN/view"},
+    "friday": {"id": "1YmQGiirdBryJlI3tx0SdU-g1gGm-6AaW", "name": "пятницу",
+               "link": "https://drive.google.com/file/d/1YmQGiirdBryJlI3tx0SdU-g1gGm-6AaW/view"},
+    "saturday": {"id": "1hkXSDN-Dz86QGeyjhLZ7jlvSd9sMwmex", "name": "субботу",
+                 "link": "https://drive.google.com/file/d/1hkXSDN-Dz86QGeyjhLZ7jlvSd9sMwmex/view"},
 }
 
-# расписание звонков
-CALL_SCHEDULE = {
-    "monday_calls": """
-<b>Понедельник</b>  
+# звонки
+CALLS = {
+    "monday_calls": """<b>Понедельник</b>
 
-<b>1⃣ </b> 8:30–9:15 | 9:20–10:05
+<b>1⃣</b> 8:30–9:15 | 9:20–10:05
 
-<b>2⃣ </b> 10:15–11:00  
-🍴  <b>Обед:</b> 11:00–11:15
-<b>2⃣ </b> 11:15–12:00  
+<b>2⃣</b> 10:15–11:00
+🍴 <b>Обед:</b> 11:00–11:15
+<b>2⃣</b> 11:15–12:00
 
-🍴  <b>Обед:</b> 12:00–12:30  
+🍴 <b>Обед:</b> 12:00–12:30
 
-🕐  <b>Классные часы:</b> 12:30–13:00  
+🕐 <b>Классные часы:</b> 12:30–13:00
 
-<b>3⃣ </b> 13:05–13:50 | 13:55–14:40  
+<b>3⃣</b> 13:05–13:50 | 13:55–14:40
 
-<b>4⃣ </b> 14:45–15:30 | 15:35–16:20  
-""",
-    "thursday_calls": """
-<b>Четверг</b>  
+<b>4⃣</b> 14:45–15:30 | 15:35–16:20""",
 
-<b>1⃣ </b> 8:30–9:15 | 9:20–10:05  
+    "thursday_calls": """<b>Четверг</b>
 
-<b>2⃣ </b> 10:15–11:00  
-🍴  <b>Обед:</b> 11:00–11:15  
-<b>2⃣ </b> 11:15–12:00  
+<b>1⃣</b> 8:30–9:15 | 9:20–10:05
 
-🍴  <b>Обед:</b> 12:00–12:30  
+<b>2⃣</b> 10:15–11:00
+🍴 <b>Обед:</b> 11:00–11:15
+<b>2⃣</b> 11:15–12:00
 
-<b>3⃣ </b> 12:30–13:15 | 13:20–14:05
+🍴 <b>Обед:</b> 12:00–12:30
 
-<b>4⃣ </b> 14:10–14:55 | 15:00–15:45
+<b>3⃣</b> 12:30–13:15 | 13:20–14:05
 
-🕐  <b>Классные часы (1 курс):</b> 15:50–16:20
-""",
-    "other_calls": """
-<b>Другие дни</b>  
+<b>4⃣</b> 14:10–14:55 | 15:00–15:45
 
-<b>1⃣ </b> 8:30–9:15 | 9:20–10:05  
+🕐 <b>Классные часы (1 курс):</b> 15:50–16:20""",
 
-<b>2⃣ </b> 10:15–11:00  
-🍴  <b>Обед:</b> 11:00–11:15  
-<b>2⃣ </b> 11:15–12:00  
+    "other_calls": """<b>Другие дни</b>
 
-🍴  <b>Обед:</b> 12:00–12:40  
+<b>1⃣</b> 8:30–9:15 | 9:20–10:05
 
-<b>3⃣ </b> 12:40–13:25 | 13:30–14:15  
+<b>2⃣</b> 10:15–11:00
+🍴 <b>Обед:</b> 11:00–11:15
+<b>2⃣</b> 11:15–12:00
 
-<b>4⃣ </b> 14:25–15:10 | 15:15–16:00  
+🍴 <b>Обед:</b> 12:00–12:40
 
-<b>5⃣ </b> 16:05–16:50 | 16:55–17:40
-"""
+<b>3⃣</b> 12:40–13:25 | 13:30–14:15
+
+<b>4⃣</b> 14:25–15:10 | 15:15–16:00
+
+<b>5⃣</b> 16:05–16:50 | 16:55–17:40"""
 }
 
-# кэш картинок
+# кэш и локи
 schedule_cache = {}
-admin_lists_cache = {}
+hash_cache = {}
+cache_ts = {}
+locks = defaultdict(asyncio.Lock)
+admin_data = {}
+send_limit = asyncio.Semaphore(25)  # макс 25 отправок одновременно
 
+PAGE_SIZE = 50
+CACHE_TTL = 3600
 
-# база данных
+# глобальное соединение с бд
+db_conn = None
+
 
 async def get_db():
-    return await aiosqlite.connect("subscribers.db")
+    global db_conn
+    if db_conn is None:
+        db_conn = await aiosqlite.connect("subscribers.db")
+    return db_conn
 
 
 async def init_db():
-    conn = await get_db()
+    db = await get_db()
 
-    # таблицы
-    await conn.execute("""
-        CREATE TABLE IF NOT EXISTS subscribers (
-            chat_id INTEGER PRIMARY KEY,
-            joined_date TEXT
-        )
-    """)
+    await db.execute("""CREATE TABLE IF NOT EXISTS subscribers (
+        chat_id INTEGER PRIMARY KEY, joined_date TEXT)""")
 
-    await conn.execute("""
-        CREATE TABLE IF NOT EXISTS schedule_updates (
-            day TEXT PRIMARY KEY,
-            last_hash TEXT,
-            last_sent_date TEXT
-        )
-    """)
+    await db.execute("""CREATE TABLE IF NOT EXISTS schedule_updates (
+        day TEXT PRIMARY KEY, last_hash TEXT, last_sent_date TEXT)""")
 
-    await conn.execute("""
-        CREATE TABLE IF NOT EXISTS all_users (
-            chat_id INTEGER PRIMARY KEY,
-            first_name TEXT,
-            last_name TEXT,
-            username TEXT,
-            first_interaction_date TEXT
-        )
-    """)
+    await db.execute("""CREATE TABLE IF NOT EXISTS all_users (
+        chat_id INTEGER PRIMARY KEY, first_name TEXT, last_name TEXT, 
+        username TEXT, first_interaction_date TEXT)""")
 
-    await conn.execute("""
-        CREATE TABLE IF NOT EXISTS interactions (
-            chat_id INTEGER,
-            interaction_date TEXT
-        )
-    """)
+    await db.execute("""CREATE TABLE IF NOT EXISTS interactions (
+        chat_id INTEGER, interaction_date TEXT)""")
 
-    # индексы
-    await conn.execute("CREATE INDEX IF NOT EXISTS idx_subscribers_chat_id ON subscribers (chat_id)")
-    await conn.execute("CREATE INDEX IF NOT EXISTS idx_interactions_date ON interactions (interaction_date)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_sub ON subscribers(chat_id)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_day ON schedule_updates(day)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_int ON interactions(interaction_date)")
 
-    await conn.commit()
-    await conn.close()
+    # миграция
+    try:
+        cur = await db.execute("PRAGMA table_info(all_users)")
+        cols = [r[1] for r in await cur.fetchall()]
+        if "username" not in cols:
+            await db.execute("ALTER TABLE all_users ADD COLUMN username TEXT")
+    except:
+        pass
+
+    try:
+        cur = await db.execute("PRAGMA table_info(schedule_updates)")
+        cols = [r[1] for r in await cur.fetchall()]
+        if "last_sent_date" not in cols:
+            await db.execute("ALTER TABLE schedule_updates ADD COLUMN last_sent_date TEXT")
+    except:
+        pass
+
+    await db.commit()
 
 
-async def add_user(chat_id, first_name, last_name, username):
-    conn = await get_db()
-    cursor = await conn.execute("SELECT 1 FROM all_users WHERE chat_id = ?", (chat_id,))
-    exists = await cursor.fetchone()
-
-    if not exists:
+async def save_user(chat_id, fname, lname, uname):
+    db = await get_db()
+    cur = await db.execute("SELECT 1 FROM all_users WHERE chat_id=?", (chat_id,))
+    if not await cur.fetchone():
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        await conn.execute(
-            "INSERT INTO all_users (chat_id, first_name, last_name, username, first_interaction_date) VALUES (?, ?, ?, ?, ?)",
-            (chat_id, first_name or "", last_name or "", username or "", now)
-        )
-        await conn.commit()
-
-    await conn.close()
+        await db.execute("INSERT INTO all_users VALUES (?,?,?,?,?)",
+                         (chat_id, fname or "", lname or "", uname or "", now))
+        await db.commit()
 
 
-async def log_interaction(chat_id):
-    conn = await get_db()
+async def log_action(chat_id):
+    db = await get_db()
     today = datetime.now().strftime("%Y-%m-%d")
-    await conn.execute("INSERT INTO interactions (chat_id, interaction_date) VALUES (?, ?)", (chat_id, today))
-    await conn.commit()
-    await conn.close()
+    await db.execute("INSERT INTO interactions VALUES (?,?)", (chat_id, today))
+    await db.commit()
 
 
-async def is_subscribed(chat_id):
-    conn = await get_db()
-    cursor = await conn.execute("SELECT 1 FROM subscribers WHERE chat_id = ?", (chat_id,))
-    result = await cursor.fetchone()
-    await conn.close()
-    return result is not None
+async def check_sub(chat_id):
+    db = await get_db()
+    cur = await db.execute("SELECT 1 FROM subscribers WHERE chat_id=?", (chat_id,))
+    res = await cur.fetchone()
+
+    return res is not None
 
 
-async def subscribe_user(chat_id):
-    conn = await get_db()
+async def add_sub(chat_id):
+    db = await get_db()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    await conn.execute("INSERT OR IGNORE INTO subscribers (chat_id, joined_date) VALUES (?, ?)", (chat_id, now))
-    await conn.commit()
-    await conn.close()
+    await db.execute("INSERT OR IGNORE INTO subscribers VALUES (?,?)", (chat_id, now))
+    await db.commit()
 
 
-async def unsubscribe_user(chat_id):
-    conn = await get_db()
-    await conn.execute("DELETE FROM subscribers WHERE chat_id = ?", (chat_id,))
-    await conn.commit()
-    await conn.close()
+async def del_sub(chat_id):
+    db = await get_db()
+    await db.execute("DELETE FROM subscribers WHERE chat_id=?", (chat_id,))
+    await db.commit()
 
 
-async def get_all_subscribers():
-    conn = await get_db()
-    cursor = await conn.execute("SELECT chat_id FROM subscribers")
-    rows = await cursor.fetchall()
-    await conn.close()
-    return [row[0] for row in rows]
+async def get_subs():
+    db = await get_db()
+    cur = await db.execute("SELECT chat_id FROM subscribers")
+    rows = await cur.fetchall()
+
+    return [r[0] for r in rows]
 
 
-async def get_last_hash(day):
-    conn = await get_db()
-    cursor = await conn.execute("SELECT last_hash FROM schedule_updates WHERE day = ?", (day,))
-    result = await cursor.fetchone()
-    await conn.close()
-    return result[0] if result else None
+async def get_users():
+    db = await get_db()
+    cur = await db.execute("SELECT chat_id FROM all_users")
+    rows = await cur.fetchall()
+
+    return [r[0] for r in rows]
 
 
-async def get_last_sent_date(day):
-    conn = await get_db()
-    cursor = await conn.execute("SELECT last_sent_date FROM schedule_updates WHERE day = ?", (day,))
-    result = await cursor.fetchone()
-    await conn.close()
-    return result[0] if result else None
+async def get_hash_db(day):
+    db = await get_db()
+    cur = await db.execute("SELECT last_hash FROM schedule_updates WHERE day=?", (day,))
+    res = await cur.fetchone()
+
+    return res[0] if res else None
 
 
-async def update_schedule_sent(day, hash_value, sent_date):
-    conn = await get_db()
-    await conn.execute(
-        "INSERT OR REPLACE INTO schedule_updates (day, last_hash, last_sent_date) VALUES (?, ?, ?)",
-        (day, hash_value, sent_date)
-    )
-    await conn.commit()
-    await conn.close()
+async def save_hash(day, h, date):
+    db = await get_db()
+    await db.execute("INSERT OR REPLACE INTO schedule_updates VALUES (?,?,?)", (day, h, date))
+    await db.commit()
 
 
 async def get_stats():
-    conn = await get_db()
-
-    cursor = await conn.execute("SELECT COUNT(*) FROM all_users")
-    total_users = (await cursor.fetchone())[0]
-
-    cursor = await conn.execute("SELECT COUNT(*) FROM subscribers")
-    subscribers = (await cursor.fetchone())[0]
-
+    db = await get_db()
+    cur = await db.execute("SELECT COUNT(*) FROM all_users")
+    total = (await cur.fetchone())[0]
+    cur = await db.execute("SELECT COUNT(*) FROM subscribers")
+    subs = (await cur.fetchone())[0]
     today = datetime.now().strftime("%Y-%m-%d")
-    cursor = await conn.execute("SELECT COUNT(DISTINCT chat_id) FROM interactions WHERE interaction_date = ?", (today,))
-    daily = (await cursor.fetchone())[0]
+    cur = await db.execute("SELECT COUNT(DISTINCT chat_id) FROM interactions WHERE interaction_date=?", (today,))
+    daily = (await cur.fetchone())[0]
 
-    await conn.close()
-    return total_users, subscribers, daily
-
-
-async def get_all_users_list():
-    conn = await get_db()
-    cursor = await conn.execute("""
-        SELECT username, first_name, last_name 
-        FROM all_users 
-        WHERE username IS NOT NULL AND username != '' 
-        ORDER BY first_interaction_date DESC
-    """)
-    rows = await cursor.fetchall()
-    await conn.close()
-    return [f"@{row[0]} ({row[1]} {row[2]})" for row in rows]
+    return total, subs, daily
 
 
-async def get_subscribers_list():
-    conn = await get_db()
-    cursor = await conn.execute("""
-        SELECT u.username, u.first_name, u.last_name 
-        FROM all_users u
+async def users_list():
+    db = await get_db()
+    cur = await db.execute("""SELECT username, first_name, last_name FROM all_users 
+        WHERE username IS NOT NULL AND username != '' ORDER BY first_interaction_date DESC""")
+    rows = await cur.fetchall()
+
+    return [f"@{r[0]} ({r[1]} {r[2]})" for r in rows]
+
+
+async def subs_list():
+    db = await get_db()
+    cur = await db.execute("""SELECT u.username, u.first_name, u.last_name FROM all_users u
         INNER JOIN subscribers s ON u.chat_id = s.chat_id
-        WHERE u.username IS NOT NULL AND u.username != ''
-        ORDER BY s.joined_date DESC
-    """)
-    rows = await cursor.fetchall()
-    await conn.close()
-    return [f"@{row[0]} ({row[1]} {row[2]})" for row in rows]
+        WHERE u.username IS NOT NULL AND u.username != '' ORDER BY s.joined_date DESC""")
+    rows = await cur.fetchall()
+
+    return [f"@{r[0]} ({r[1]} {r[2]})" for r in rows]
 
 
-# работа с файлами
+# === PDF ===
 
-async def download_pdf(file_id):
-    url = f"https://drive.google.com/uc?export=download&id={file_id}"
+async def download_pdf(fid):
+    url = f"https://drive.google.com/uc?export=download&id={fid}"
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/pdf"}
 
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-        response = await client.get(url)
+    for i in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
+                r = await c.get(url, headers=headers)
+                if r.status_code == 429:
+                    await asyncio.sleep(2 ** i)
+                    continue
+                r.raise_for_status()
+                if r.content.startswith(b"%PDF"):
+                    return r.content, None
+                return None, "не pdf"
+        except Exception as e:
+            if i == 2:
+                return None, str(e)
+            await asyncio.sleep(2 ** i)
+    return None, "не скачалось"
 
-        print(f"Скачивание {file_id}: статус {response.status_code}, размер {len(response.content)} байт")
 
-        if response.status_code == 200 and response.content.startswith(b"%PDF"):
-            return response.content, None
-        else:
-            print(f"Ошибка: не PDF или статус {response.status_code}")
-            return None, "Ошибка загрузки"
-
-
-def pdf_to_images(pdf_content):
-    doc = fitz.open(stream=pdf_content, filetype="pdf")
-    images = []
-
-    for page_num in range(len(doc)):
-        page = doc.load_page(page_num)
+def make_images(pdf):
+    doc = fitz.open(stream=pdf, filetype="pdf")
+    imgs = []
+    for i in range(len(doc)):
+        page = doc.load_page(i)
         pix = page.get_pixmap(dpi=150)
-
         img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-
-        # уменьшаем если большое
         if img.width > 2000 or img.height > 2000:
             img.thumbnail((2000, 2000), Image.Resampling.LANCZOS)
-
-        buffer = BytesIO()
-        img.save(buffer, format="PNG", optimize=True, quality=85)
-        buffer.seek(0)
-        images.append(buffer)
-
+        buf = BytesIO()
+        img.save(buf, format="PNG", optimize=True)
+        buf.seek(0)
+        imgs.append(buf)
     doc.close()
-    return images
+    return imgs
 
 
-def get_file_hash(content):
-    return hashlib.sha256(content).hexdigest()
+def calc_hash(data):
+    return hashlib.sha256(data).hexdigest()
 
 
-# меню
-
-def main_menu(is_admin=False):
-    menu = InlineKeyboardMarkup()
-    menu.row(InlineKeyboardButton("🗓️Расписание", callback_data="schedule"))
-    menu.row(
-        InlineKeyboardButton("🔔Звонки", callback_data="bell"),
-        InlineKeyboardButton("📬Рассылка", callback_data="mailing"),
-    )
-    if is_admin:
-        menu.row(InlineKeyboardButton("📊Статистика", callback_data="admin_stats"))
-    return menu
+def donate_link():
+    return '❤️<a href="https://www.sberbank.com/sms/pbpn?requisiteNumber=79950614483">Поддержать бота</a> - сервер платный, буду благодарен за помощь!'
 
 
-def schedule_menu():
-    days = [
-        ("Понедельник", "monday"),
-        ("Вторник", "tuesday"),
-        ("Среда", "wednesday"),
-        ("Четверг", "thursday"),
-        ("Пятница", "friday"),
-        ("Суббота", "saturday")
-    ]
+# === МЕНЮ ===
 
-    menu = InlineKeyboardMarkup()
-    for i in range(0, len(days), 3):
-        menu.add(*[InlineKeyboardButton(name, callback_data=f"schedule_{key}") for name, key in days[i:i + 3]])
-    menu.row(InlineKeyboardButton("Меню", callback_data="back_to_main"))
-    return menu
+def menu_main(admin=False):
+    m = InlineKeyboardMarkup()
+    m.row(InlineKeyboardButton("🗓️Расписание", callback_data="schedule"))
+    m.row(InlineKeyboardButton("🔔Звонки", callback_data="bell"),
+          InlineKeyboardButton("📬Рассылка", callback_data="mailing"))
+    if admin:
+        m.row(InlineKeyboardButton("📊Статистика", callback_data="admin_stats"))
+    return m
 
 
-def calls_menu():
-    menu = InlineKeyboardMarkup()
-    menu.add(
-        InlineKeyboardButton("Понедельник", callback_data="monday_calls"),
-        InlineKeyboardButton("Четверг", callback_data="thursday_calls"),
-        InlineKeyboardButton("Другие дни", callback_data="other_calls")
-    )
-    menu.row(InlineKeyboardButton("Меню", callback_data="back_to_main"))
-    return menu
+def menu_days():
+    days = [("Понедельник", "monday"), ("Вторник", "tuesday"), ("Среда", "wednesday"),
+            ("Четверг", "thursday"), ("Пятница", "friday"), ("Суббота", "saturday")]
+    m = InlineKeyboardMarkup()
+    for i in range(0, 6, 3):
+        m.add(*[InlineKeyboardButton(n, callback_data=f"day_{k}") for n, k in days[i:i + 3]])
+    m.row(InlineKeyboardButton("Меню", callback_data="main"))
+    return m
 
 
-def mailing_menu(subscribed):
-    menu = InlineKeyboardMarkup()
-    if subscribed:
-        menu.row(InlineKeyboardButton("Отписаться от рассылки", callback_data="unsubscribe"))
+def menu_calls():
+    m = InlineKeyboardMarkup()
+    m.add(InlineKeyboardButton("Понедельник", callback_data="monday_calls"),
+          InlineKeyboardButton("Четверг", callback_data="thursday_calls"),
+          InlineKeyboardButton("Другие", callback_data="other_calls"))
+    m.row(InlineKeyboardButton("Меню", callback_data="main"))
+    return m
+
+
+def menu_mail(subbed):
+    m = InlineKeyboardMarkup()
+    if subbed:
+        m.row(InlineKeyboardButton("Отписаться", callback_data="unsub"))
     else:
-        menu.row(InlineKeyboardButton("Подписаться на рассылку", callback_data="subscribe"))
-    menu.row(InlineKeyboardButton("Меню", callback_data="back_to_main"))
-    return menu
+        m.row(InlineKeyboardButton("Подписаться", callback_data="sub"))
+    m.row(InlineKeyboardButton("Меню", callback_data="main"))
+    return m
 
 
-def stats_menu():
-    menu = InlineKeyboardMarkup()
-    menu.row(InlineKeyboardButton("👥Список пользователей", callback_data="list_users"))
-    menu.row(InlineKeyboardButton("👥Список подписчиков", callback_data="list_subscribers"))
-    menu.row(InlineKeyboardButton("Меню", callback_data="back_to_main"))
-    return menu
+def menu_stats():
+    m = InlineKeyboardMarkup()
+    m.row(InlineKeyboardButton("👥Пользователи", callback_data="list_users"))
+    m.row(InlineKeyboardButton("👥Подписчики", callback_data="list_subs"))
+    m.row(InlineKeyboardButton("Меню", callback_data="main"))
+    return m
 
 
-def pagination_menu(list_type, page, total_pages):
-    menu = InlineKeyboardMarkup()
-    row = []
-
-    if page > 1:
-        row.append(InlineKeyboardButton("◀️Назад", callback_data=f"{list_type}*page*{page - 1}"))
-    if page < total_pages:
-        row.append(InlineKeyboardButton("Далее▶️", callback_data=f"{list_type}*page*{page + 1}"))
-
-    if row:
-        menu.row(*row)
-    menu.row(InlineKeyboardButton("Назад к статистике", callback_data="admin_stats"))
-    return menu
+def menu_pages(typ, pg, total):
+    m = InlineKeyboardMarkup()
+    btns = []
+    if pg > 1:
+        btns.append(InlineKeyboardButton("◀️", callback_data=f"{typ}_{pg - 1}"))
+    if pg < total:
+        btns.append(InlineKeyboardButton("▶️", callback_data=f"{typ}_{pg + 1}"))
+    if btns:
+        m.row(*btns)
+    m.row(InlineKeyboardButton("Статистика", callback_data="admin_stats"))
+    return m
 
 
-def get_donate_text():
-    return '<a href="https://www.sberbank.com/sms/pbpn?requisiteNumber=79950614483"><u>Поддержите</u></a> бота для стабильной работы❤️'
+# === КЭШ ===
+
+async def from_cache(day):
+    if day in schedule_cache and time.time() - cache_ts.get(day, 0) < CACHE_TTL:
+        return schedule_cache[day]
+    # чистим если устарел
+    schedule_cache.pop(day, None)
+    hash_cache.pop(day, None)
+    cache_ts.pop(day, None)
+    return None
 
 
-# рассылка расписания
+async def to_cache(day, imgs, h):
+    schedule_cache[day] = imgs
+    hash_cache[day] = h
+    cache_ts[day] = time.time()
 
-async def check_schedule_updates():
+
+# === РАССЫЛКА ===
+
+async def send_to_user(uid, imgs, info, caption):
+    async with send_limit:  # ограничение параллельных отправок
+        try:
+            for j, img in enumerate(imgs):
+                img.seek(0)
+                copy = BytesIO(img.read())
+                img.seek(0)
+                cap = None
+                if j == len(imgs) - 1:
+                    cap = f"{caption}\n📎<a href=\"{info['link']}\">Расписание</a>\n\n{donate_link()}"
+                await bot.send_photo(uid, copy, caption=cap, parse_mode="HTML" if cap else None)
+            await log_action(uid)
+        except Exception as e:
+            print(f"err send {uid}: {e}")
+            raise
+
+
+async def mass_send(users, imgs, info, caption):
+    ok = err = 0
+    # шлём всем параллельно, семафор сам ограничит
+    tasks = [send_to_user(u, imgs, info, caption) for u in users]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for r in results:
+        if isinstance(r, Exception):
+            err += 1
+        else:
+            ok += 1
+    return ok, err
+
+
+# === ПРОВЕРКА ОБНОВЛЕНИЙ ===
+
+async def check_loop():
     schedule_cache.clear()
+    hash_cache.clear()
+    cache_ts.clear()
 
     while True:
         try:
-            # время UTC+7
-            now = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=7)))
-            weekday = now.weekday()
+            now = datetime.now(timezone(timedelta(hours=7)))
+            wd = now.weekday()
 
-            # следующий учебный день
-            next_day = {
-                0: "tuesday",  # пн -> вт
-                1: "wednesday",  # вт -> ср
-                2: "thursday",  # ср -> чт
-                3: "friday",  # чт -> пт
-                4: "saturday",  # пт -> сб
-                5: "monday",  # сб -> пн
-                6: "monday",  # вс -> пн
-            }.get(weekday)
+            next_day = {0: "tuesday", 1: "wednesday", 2: "thursday",
+                        3: "friday", 4: "saturday", 5: "monday", 6: "monday"}.get(wd)
 
             if not next_day or next_day not in SCHEDULE_FILES:
-                await asyncio.sleep(600)  # 10 минут
+                await asyncio.sleep(900)
                 continue
 
-            file_info = SCHEDULE_FILES[next_day]
+            info = SCHEDULE_FILES[next_day]
+            pdf, err = await download_pdf(info["id"])
 
-            # качаем pdf
-            pdf_content, error = await download_pdf(file_info["id"])
-            if not pdf_content:
-                print(f"Ошибка скачивания {next_day}: {error}")
-                await asyncio.sleep(600)  # 10 минут
+            if not pdf:
+                print(f"не скачал {next_day}: {err}")
+                await asyncio.sleep(900)
                 continue
 
-            current_hash = get_file_hash(pdf_content)
-            last_hash = await get_last_hash(next_day)
-            today = now.strftime("%Y-%m-%d")
+            cur_hash = calc_hash(pdf)
+            old_hash = await get_hash_db(next_day)
 
-            # проверяем изменилось ли
-            schedule_changed = (current_hash != last_hash or last_hash is None)
+            if cur_hash != old_hash:
+                imgs = make_images(pdf)
+                await to_cache(next_day, imgs, cur_hash)
 
-            if schedule_changed:
-                # в картинки
-                loop = asyncio.get_event_loop()
-                images = await loop.run_in_executor(None, pdf_to_images, pdf_content)
-                schedule_cache[next_day] = images
-                schedule_cache[f"{next_day}_hash"] = current_hash
+                subs = await get_subs()
+                if subs:
+                    ok, fail = await mass_send(subs, imgs, info, f"🔄Расписание на {info['name']}")
+                    print(f"рассылка: {ok} ок, {fail} ошибок")
 
-                # отправляем всем подписчикам
-                subscribers = await get_all_subscribers()
-                if subscribers:
-                    caption_text = f"🔄Обновлено расписание на {file_info['name']}" if schedule_changed else f"📚Расписание на {file_info['name']}"
+                await save_hash(next_day, cur_hash, now.strftime("%Y-%m-%d"))
+            else:
+                print(f"без изменений: {next_day}")
 
-                    for subscriber_id in subscribers:
-                        try:
-                            for j, img in enumerate(images):
-                                # создаем копию для отправки
-                                img.seek(0)
-                                img_copy = BytesIO(img.read())
-                                img.seek(0)  # возвращаем позицию
-
-                                caption = None
-
-                                if j == len(images) - 1:
-                                    caption = f"{caption_text}\n📎<a href=\"{file_info['link']}\">Ссылка на расписание</a>\n\n{get_donate_text()}"
-
-                                await bot.send_photo(
-                                    subscriber_id,
-                                    photo=img_copy,
-                                    caption=caption,
-                                    parse_mode="HTML" if caption else None
-                                )
-
-                            await log_interaction(subscriber_id)
-                            await asyncio.sleep(0.2)
-
-                        except Exception as e:
-                            print(f"Ошибка отправки подписчику {subscriber_id}: {e}")
-
-                # записываем в базу
-                await update_schedule_sent(next_day, current_hash, today)
-
-            await asyncio.sleep(600)  # 10 минут
+            await asyncio.sleep(900)
 
         except Exception as e:
-            print(f"Ошибка в check_schedule_updates: {e}")
+            print(f"ошибка check: {e}")
             await asyncio.sleep(60)
 
 
-# команды
+# === КОМАНДЫ ===
 
 @bot.message_handler(commands=["start"])
-async def start(message):
-    user = message.from_user
-    chat_id = message.chat.id
-
-    await add_user(chat_id, user.first_name, user.last_name, user.username)
-    await log_interaction(chat_id)
-
-    is_admin = chat_id == ADMIN_CHAT_ID
-    await bot.send_message(
-        chat_id,
-        f"Привет, {user.first_name}!😊",
-        reply_markup=main_menu(is_admin),
-        parse_mode="HTML"
-    )
+async def cmd_start(msg):
+    u = msg.from_user
+    await save_user(msg.chat.id, u.first_name, u.last_name, u.username)
+    await log_action(msg.chat.id)
+    await bot.send_message(msg.chat.id, f"Привет, {u.first_name}!😊",
+                           reply_markup=menu_main(msg.chat.id == ADMIN_ID))
 
 
 @bot.message_handler(commands=["schedule"])
-async def schedule(message):
-    user = message.from_user
-    chat_id = message.chat.id
-
-    await add_user(chat_id, user.first_name, user.last_name, user.username)
-    await log_interaction(chat_id)
-
-    await bot.send_message(chat_id, "Выберите день недели☺️", reply_markup=schedule_menu())
+async def cmd_schedule(msg):
+    u = msg.from_user
+    await save_user(msg.chat.id, u.first_name, u.last_name, u.username)
+    await log_action(msg.chat.id)
+    await bot.send_message(msg.chat.id, "Выберите день☺️", reply_markup=menu_days())
 
 
 @bot.message_handler(commands=["bell"])
-async def bell(message):
-    user = message.from_user
-    chat_id = message.chat.id
-
-    await add_user(chat_id, user.first_name, user.last_name, user.username)
-    await log_interaction(chat_id)
-
-    await bot.send_message(chat_id, "Информация о звонках🫨", reply_markup=calls_menu())
+async def cmd_bell(msg):
+    u = msg.from_user
+    await save_user(msg.chat.id, u.first_name, u.last_name, u.username)
+    await log_action(msg.chat.id)
+    await bot.send_message(msg.chat.id, "Информация о звонках🔔", reply_markup=menu_calls())
 
 
 @bot.message_handler(commands=["mailing"])
-async def mailing(message):
-    user = message.from_user
-    chat_id = message.chat.id
-
-    await add_user(chat_id, user.first_name, user.last_name, user.username)
-    await log_interaction(chat_id)
-
-    subscribed = await is_subscribed(chat_id)
-    text = "Вы подписаны на рассылку!✅" if subscribed else "Вы отписаны от рассылки!❎"
-    await bot.send_message(chat_id, text, reply_markup=mailing_menu(subscribed))
+async def cmd_mailing(msg):
+    u = msg.from_user
+    await save_user(msg.chat.id, u.first_name, u.last_name, u.username)
+    await log_action(msg.chat.id)
+    subbed = await check_sub(msg.chat.id)
+    txt = "Вы подписаны✅" if subbed else "Вы отписаны❎"
+    await bot.send_message(msg.chat.id, txt, reply_markup=menu_mail(subbed))
 
 
 @bot.message_handler(commands=["stats"])
-async def stats(message):
-    if message.chat.id != ADMIN_CHAT_ID:
-        await bot.send_message(message.chat.id, "Доступ запрещен")
+async def cmd_stats(msg):
+    if msg.chat.id != ADMIN_ID:
+        await bot.send_message(msg.chat.id, "нет доступа")
+        return
+    total, subs, daily = await get_stats()
+    await bot.send_message(msg.chat.id,
+                           f"📊Статистика:\n\nВсего: {total}\nПодписаны: {subs}\nСегодня: {daily}",
+                           reply_markup=menu_stats())
+
+
+@bot.message_handler(commands=["broadcast"])
+async def cmd_broadcast(msg):
+    if msg.chat.id != ADMIN_ID:
+        return
+    txt = msg.text.replace("/broadcast", "").strip()
+    if not txt:
+        await bot.send_message(msg.chat.id, "напиши /broadcast текст")
         return
 
-    total, subscribers, daily = await get_stats()
-    text = f"📊Статистика:\n\nВсего использовали: {total}\nПодписано на рассылку: {subscribers}\nАктивных сегодня: {daily}"
-    await bot.send_message(message.chat.id, text, reply_markup=stats_menu())
+    users = await get_users()
+    if not users:
+        await bot.send_message(msg.chat.id, "нет юзеров")
+        return
+
+    markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton("✅Да", callback_data="bc_yes"),
+               InlineKeyboardButton("❌Нет", callback_data="bc_no"))
+
+    admin_data[msg.chat.id] = {"bc_text": txt, "bc_users": users}
+    await bot.send_message(msg.chat.id,
+                           f"Отправить {len(users)} людям?\n\n<b>Текст:</b>\n{txt}",
+                           parse_mode="HTML", reply_markup=markup)
 
 
-# кнопки
+# === КОЛБЕКИ ===
 
-@bot.callback_query_handler(func=lambda call: call.data == "schedule")
-async def schedule_callback(call):
-    user = call.from_user
-    chat_id = call.message.chat.id
-
-    await add_user(chat_id, user.first_name, user.last_name, user.username)
-    await log_interaction(chat_id)
-
+@bot.callback_query_handler(func=lambda c: c.data == "schedule")
+async def cb_schedule(call):
+    u = call.from_user
+    await save_user(call.message.chat.id, u.first_name, u.last_name, u.username)
+    await log_action(call.message.chat.id)
     try:
-        await bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text="Выберите день недели☺️",
-            reply_markup=schedule_menu()
-        )
+        await bot.edit_message_text(chat_id=call.message.chat.id,
+                                    message_id=call.message.message_id, text="Выберите день☺️",
+                                    reply_markup=menu_days())
     except:
-        await bot.send_message(chat_id, "Выберите день недели☺️", reply_markup=schedule_menu())
+        await bot.send_message(call.message.chat.id, "Выберите день☺️", reply_markup=menu_days())
 
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("schedule_"))
-async def schedule_day(call):
-    day = call.data.split("_")[1]
-    user = call.from_user
-    chat_id = call.message.chat.id
-
-    await add_user(chat_id, user.first_name, user.last_name, user.username)
-    await log_interaction(chat_id)
+@bot.callback_query_handler(func=lambda c: c.data.startswith("day_"))
+async def cb_day(call):
+    day = call.data[4:]
+    u = call.from_user
+    await save_user(call.message.chat.id, u.first_name, u.last_name, u.username)
+    await log_action(call.message.chat.id)
 
     if day not in SCHEDULE_FILES:
-        await bot.answer_callback_query(call.id, text="Неизвестный день")
+        await bot.answer_callback_query(call.id, "неизвестный день")
         return
 
-    file_info = SCHEDULE_FILES[day]
-    await bot.answer_callback_query(call.id, text="Загружаю...")
+    info = SCHEDULE_FILES[day]
+    await bot.answer_callback_query(call.id, "Загружаю...")
 
-    # проверяем актуальность кэша
-    pdf_content, error = await download_pdf(file_info["id"])
-    if not pdf_content:
-        await bot.send_message(
-            chat_id,
-            f"❌Не удалось загрузить\n📎<a href=\"{file_info['link']}\">Ссылка на расписание</a>",
-            reply_markup=schedule_menu(),
-            parse_mode="HTML"
-        )
-        return
+    try:
+        async with locks[day]:
+            cached = await from_cache(day)
+            if cached:
+                imgs = cached
+            else:
+                pdf, err = await download_pdf(info["id"])
+                if not pdf:
+                    await bot.send_message(call.message.chat.id,
+                                           f"❌Ошибка\n<a href=\"{info['link']}\">Открыть</a>",
+                                           reply_markup=menu_days(), parse_mode="HTML")
+                    return
+                imgs = make_images(pdf)
+                await to_cache(day, imgs, calc_hash(pdf))
 
-    current_hash = get_file_hash(pdf_content)
-    cached_images = schedule_cache.get(day)
+        for j, img in enumerate(imgs):
+            img.seek(0)
+            copy = BytesIO(img.read())
+            img.seek(0)
+            cap = None
+            markup = None
+            if j == len(imgs) - 1:
+                cap = f"📚Расписание на {info['name']}\n📎<a href=\"{info['link']}\">Ссылка на расписание</a>\n\n{donate_link()}"
+                markup = menu_days()
+            await bot.send_photo(call.message.chat.id, copy, caption=cap,
+                                 parse_mode="HTML" if cap else None, reply_markup=markup)
 
-    # если кэша нет или файл изменился - обновляем
-    if not cached_images or current_hash != schedule_cache.get(f"{day}_hash"):
-        loop = asyncio.get_event_loop()
-        images = await loop.run_in_executor(None, pdf_to_images, pdf_content)
-        schedule_cache[day] = images
-        schedule_cache[f"{day}_hash"] = current_hash
-    else:
-        images = cached_images
-
-    # шлем
-    for i, img in enumerate(images):
-        # создаем новый BytesIO из содержимого
-        img.seek(0)
-        img_copy = BytesIO(img.read())
-        img.seek(0)  # возвращаем позицию для следующего использования
-
-        caption = None
-        markup = None
-
-        if i == len(images) - 1:
-            caption = f"📚Расписание на {file_info['name']}\n📎<a href=\"{file_info['link']}\">Ссылка на расписание</a>\n\n{get_donate_text()}"
-            markup = schedule_menu()
-
-        await bot.send_photo(chat_id, photo=img_copy, caption=caption, parse_mode="HTML" if caption else None,
-                             reply_markup=markup)
+    except Exception as e:
+        await bot.answer_callback_query(call.id, "ошибка")
+        print(f"err day: {e}")
 
 
-@bot.callback_query_handler(func=lambda call: True)
-async def callback_handler(call):
-    chat_id = call.message.chat.id
-    user = call.from_user
+@bot.callback_query_handler(func=lambda c: True)
+async def cb_other(call):
+    cid = call.message.chat.id
+    u = call.from_user
+    await save_user(cid, u.first_name, u.last_name, u.username)
+    await log_action(cid)
 
-    await add_user(chat_id, user.first_name, user.last_name, user.username)
-    await log_interaction(chat_id)
+    try:
+        data = call.data
 
-    # админка
-    if call.data == "admin_stats":
-        if chat_id != ADMIN_CHAT_ID:
-            await bot.answer_callback_query(call.id, text="Доступ запрещен")
-            return
+        # админка
+        if data == "admin_stats":
+            if cid != ADMIN_ID:
+                await bot.answer_callback_query(call.id, "нет")
+                return
+            total, subs, daily = await get_stats()
+            await bot.edit_message_text(chat_id=cid, message_id=call.message.message_id,
+                                        text=f"📊Статистика:\n\nВсего: {total}\nПодписаны: {subs}\nСегодня: {daily}",
+                                        reply_markup=menu_stats())
 
-        total, subscribers, daily = await get_stats()
-        text = f"📊Статистика:\n\nВсего использовали: {total}\nПодписано на рассылку: {subscribers}\nАктивных сегодня: {daily}"
-        await bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text=text,
-            reply_markup=stats_menu()
-        )
-        return
+        elif data.startswith("list_users"):
+            if cid != ADMIN_ID:
+                return
+            pg = 1 if data == "list_users" else int(data.split("_")[-1])
+            if data == "list_users":
+                admin_data[cid] = admin_data.get(cid, {})
+                admin_data[cid]["ul"] = await users_list()
+            ul = admin_data.get(cid, {}).get("ul", [])
+            pages = (len(ul) + PAGE_SIZE - 1) // PAGE_SIZE or 1
+            start = (pg - 1) * PAGE_SIZE
+            items = ul[start:start + PAGE_SIZE]
+            await bot.edit_message_text(chat_id=cid, message_id=call.message.message_id,
+                                        text=f"👥Пользователи ({pg}/{pages}):\n\n" + "\n".join(items),
+                                        reply_markup=menu_pages("list_users", pg, pages))
 
-    # списки юзеров
-    if call.data.startswith("list_users"):
-        if chat_id != ADMIN_CHAT_ID:
-            await bot.answer_callback_query(call.id, text="Доступ запрещен")
-            return
+        elif data.startswith("list_subs"):
+            if cid != ADMIN_ID:
+                return
+            pg = 1 if data == "list_subs" else int(data.split("_")[-1])
+            if data == "list_subs":
+                admin_data[cid] = admin_data.get(cid, {})
+                admin_data[cid]["sl"] = await subs_list()
+            sl = admin_data.get(cid, {}).get("sl", [])
+            pages = (len(sl) + PAGE_SIZE - 1) // PAGE_SIZE or 1
+            start = (pg - 1) * PAGE_SIZE
+            items = sl[start:start + PAGE_SIZE]
+            await bot.edit_message_text(chat_id=cid, message_id=call.message.message_id,
+                                        text=f"👥Подписчики ({pg}/{pages}):\n\n" + "\n".join(items),
+                                        reply_markup=menu_pages("list_subs", pg, pages))
 
-        page = 1 if call.data == "list_users" else int(call.data.split("*")[-1])
+        # broadcast
+        elif data == "bc_yes":
+            if cid != ADMIN_ID:
+                return
+            d = admin_data.get(cid, {})
+            txt = d.get("bc_text")
+            users = d.get("bc_users", [])
+            if not txt or not users:
+                return
 
-        if call.data == "list_users":
-            users_list = await get_all_users_list()
-            admin_lists_cache[chat_id] = {'users': users_list}
-        else:
-            users_list = admin_lists_cache.get(chat_id, {}).get('users', [])
+            await bot.edit_message_text(chat_id=cid, message_id=call.message.message_id, text="🔄...")
+            ok = err = 0
+            for i in range(0, len(users), 20):
+                batch = users[i:i + 20]
+                for uid in batch:
+                    try:
+                        await bot.send_message(uid, txt, parse_mode="HTML")
+                        ok += 1
+                    except:
+                        err += 1
+                if i + 20 < len(users):
+                    await asyncio.sleep(1)
 
-        total_pages = (len(users_list) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
-        start = (page - 1) * ITEMS_PER_PAGE
-        page_items = users_list[start:start + ITEMS_PER_PAGE]
+            await bot.send_message(cid, f"✅Готово\nОтправлено: {ok}\nОшибок: {err}")
+            admin_data.pop(cid, None)
 
-        text = f"👥 Список пользователей (страница {page}/{total_pages}):\n\n" + "\n".join(page_items)
-        markup = pagination_menu("list_users", page, total_pages)
+        elif data == "bc_no":
+            await bot.edit_message_text(chat_id=cid, message_id=call.message.message_id, text="❌Отменено")
+            admin_data.pop(cid, None)
 
-        await bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text=text,
-            reply_markup=markup
-        )
-        return
+        # меню
+        elif data == "mailing":
+            subbed = await check_sub(cid)
+            txt = "Вы подписаны✅" if subbed else "Вы отписаны❎"
+            await bot.edit_message_text(chat_id=cid, message_id=call.message.message_id,
+                                        text=txt, reply_markup=menu_mail(subbed))
 
-    if call.data.startswith("list_subscribers"):
-        if chat_id != ADMIN_CHAT_ID:
-            await bot.answer_callback_query(call.id, text="Доступ запрещен")
-            return
+        elif data in CALLS:
+            await bot.edit_message_text(chat_id=cid, message_id=call.message.message_id,
+                                        text=CALLS[data], parse_mode="HTML", reply_markup=menu_calls())
 
-        page = 1 if call.data == "list_subscribers" else int(call.data.split("*")[-1])
+        elif data == "bell":
+            await bot.edit_message_text(chat_id=cid, message_id=call.message.message_id,
+                                        text="Информация о звонках🔔", reply_markup=menu_calls())
 
-        if call.data == "list_subscribers":
-            subs_list = await get_subscribers_list()
-            admin_lists_cache[chat_id] = {'subscribers': subs_list}
-        else:
-            subs_list = admin_lists_cache.get(chat_id, {}).get('subscribers', [])
+        elif data == "sub":
+            await add_sub(cid)
+            await bot.edit_message_text(chat_id=cid, message_id=call.message.message_id,
+                                        text="Вы подписаны✅", reply_markup=menu_mail(True))
 
-        total_pages = (len(subs_list) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
-        start = (page - 1) * ITEMS_PER_PAGE
-        page_items = subs_list[start:start + ITEMS_PER_PAGE]
+        elif data == "unsub":
+            await del_sub(cid)
+            await bot.edit_message_text(chat_id=cid, message_id=call.message.message_id,
+                                        text="Вы отписаны❎", reply_markup=menu_mail(False))
 
-        text = f"👥 Список подписчиков (страница {page}/{total_pages}):\n\n" + "\n".join(page_items)
-        markup = pagination_menu("list_subscribers", page, total_pages)
+        elif data == "main":
+            admin = cid == ADMIN_ID
+            try:
+                await bot.edit_message_text(chat_id=cid, message_id=call.message.message_id,
+                                            text="Выберите кнопку ниже😊", reply_markup=menu_main(admin))
+            except:
+                await bot.send_message(cid, "Выберите кнопку ниже😊", reply_markup=menu_main(admin))
 
-        await bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text=text,
-            reply_markup=markup
-        )
-        return
-
-    # остальное
-    if call.data == "mailing":
-        subscribed = await is_subscribed(chat_id)
-        text = "Вы подписаны на рассылку!✅" if subscribed else "Вы отписаны от рассылки!❎"
-        await bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text=text,
-            reply_markup=mailing_menu(subscribed)
-        )
-
-    elif call.data in CALL_SCHEDULE:
-        await bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text=CALL_SCHEDULE[call.data],
-            parse_mode="HTML",
-            reply_markup=calls_menu()
-        )
-
-    elif call.data == "bell":
-        await bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text="Информация о звонках🫨",
-            reply_markup=calls_menu()
-        )
-
-    elif call.data == "subscribe":
-        await subscribe_user(chat_id)
-        await bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text="Вы подписаны на рассылку!✅",
-            reply_markup=mailing_menu(True)
-        )
-
-    elif call.data == "unsubscribe":
-        await unsubscribe_user(chat_id)
-        await bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text="Вы отписаны от рассылки!❎",
-            reply_markup=mailing_menu(False)
-        )
-
-    elif call.data == "back_to_main":
-        is_admin = chat_id == ADMIN_CHAT_ID
-        try:
-            await bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=call.message.message_id,
-                text="Выберите кнопку ниже😊",
-                reply_markup=main_menu(is_admin)
-            )
-        except:
-            await bot.send_message(chat_id, "Выберите кнопку ниже😊", reply_markup=main_menu(is_admin))
+    except Exception as e:
+        await bot.answer_callback_query(call.id, "ошибка")
+        print(f"cb err: {e}")
 
 
-# запуск
+# === ЗАПУСК ===
 
-async def set_commands():
+async def setup():
     await bot.set_my_commands([
         BotCommand("start", "🚀Старт"),
         BotCommand("schedule", "🗓️Расписание"),
@@ -796,30 +722,31 @@ async def set_commands():
     ])
 
 
-async def log_stats():
+async def stats_log():
     while True:
-        total, subscribers, _ = await get_stats()
-        print(f"Stats: subscribers {subscribers}, all users {total}")
+        try:
+            t, s, _ = await get_stats()
+            print(f"stats: {s} subs, {t} total")
+        except:
+            pass
         await asyncio.sleep(3600)
 
 
 async def main():
     await init_db()
-    await set_commands()
-
-    asyncio.create_task(check_schedule_updates())
-    asyncio.create_task(log_stats())
-
+    await setup()
+    asyncio.create_task(check_loop())
+    asyncio.create_task(stats_log())
+    print("бот запущен")
     await bot.polling(non_stop=True, skip_pending=True)
 
 
 if __name__ == "__main__":
     if os.name == "nt":
         os.system("chcp 65001 > nul")
-
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Bot stopped by user")
+        print("\nстоп")
     except Exception as e:
-        print(f"Critical error: {e}")
+        print(f"ошибка: {e}")
