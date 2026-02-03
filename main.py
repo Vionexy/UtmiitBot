@@ -13,7 +13,7 @@ from collections import defaultdict
 import time
 
 # токен бота
-API_TOKEN = "8378335500:AAHeCs6vca4f_JKTGvAylAc9YteircOYVeU"
+API_TOKEN = os.getenv("API_TOKEN")
 if not API_TOKEN:
     raise RuntimeError("Нужен API_TOKEN")
 
@@ -356,7 +356,7 @@ def menu_pages(typ, pg, total):
         btns.append(InlineKeyboardButton("▶️", callback_data=f"{typ}_{pg + 1}"))
     if btns:
         m.row(*btns)
-    m.row(InlineKeyboardButton("Статистика", callback_data="admin_stats"))
+    m.row(InlineKeyboardButton("📊Статистика", callback_data="admin_stats"))
     return m
 
 
@@ -504,7 +504,7 @@ async def cmd_stats(msg):
         return
     total, subs, daily = await get_stats()
     await bot.send_message(msg.chat.id,
-                           f"📊Статистика:\n\nВсего: {total}\nПодписаны: {subs}\nСегодня: {daily}",
+                           f"📊Статистика:\n/broadcast \n\nВсего: {total}\nПодписаны: {subs}\nСегодня: {daily}",
                            reply_markup=menu_stats())
 
 
@@ -610,7 +610,7 @@ async def cb_other(call):
                 return
             total, subs, daily = await get_stats()
             await bot.edit_message_text(chat_id=cid, message_id=call.message.message_id,
-                                        text=f"📊Статистика:\n\nВсего: {total}\nПодписаны: {subs}\nСегодня: {daily}",
+                                        text=f"📊Статистика:\n/broadcast \n\nВсего: {total}\nПодписаны: {subs}\nСегодня: {daily}",
                                         reply_markup=menu_stats())
 
         elif data.startswith("list_users"):
