@@ -297,9 +297,12 @@ async def download_pdf(file_id):
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
         response = await client.get(url)
 
+        print(f"Скачивание {file_id}: статус {response.status_code}, размер {len(response.content)} байт")
+
         if response.status_code == 200 and response.content.startswith(b"%PDF"):
             return response.content, None
         else:
+            print(f"Ошибка: не PDF или статус {response.status_code}")
             return None, "Ошибка загрузки"
 
 
@@ -375,9 +378,9 @@ def calls_menu():
 def mailing_menu(subscribed):
     menu = InlineKeyboardMarkup()
     if subscribed:
-        menu.row(InlineKeyboardButton("Отписаться", callback_data="unsubscribe"))
+        menu.row(InlineKeyboardButton("Отписаться от рассылки", callback_data="unsubscribe"))
     else:
-        menu.row(InlineKeyboardButton("Подписаться", callback_data="subscribe"))
+        menu.row(InlineKeyboardButton("Подписаться на рассылку", callback_data="subscribe"))
     menu.row(InlineKeyboardButton("Меню", callback_data="back_to_main"))
     return menu
 
@@ -406,7 +409,8 @@ def pagination_menu(list_type, page, total_pages):
 
 
 def get_donate_text():
-    return '❤️<a href="https://www.sberbank.com/sms/pbpn?requisiteNumber=79950614483">Поддержать бота</a> - сервер платный, буду благодарен за помощь!'
+    return '<a href="https://www.sberbank.com/sms/pbpn?requisiteNumber=79950614483"><u>Поддержите</u></a> бота для стабильной работы❤️'
+
 
 # рассылка расписания
 
@@ -465,7 +469,11 @@ async def check_schedule_updates():
                     for subscriber_id in subscribers:
                         try:
                             for j, img in enumerate(images):
+                                # создаем копию для отправки
                                 img.seek(0)
+                                img_copy = BytesIO(img.read())
+                                img.seek(0)  # возвращаем позицию
+
                                 caption = None
 
                                 if j == len(images) - 1:
@@ -473,7 +481,7 @@ async def check_schedule_updates():
 
                                 await bot.send_photo(
                                     subscriber_id,
-                                    photo=img,
+                                    photo=img_copy,
                                     caption=caption,
                                     parse_mode="HTML" if caption else None
                                 )
